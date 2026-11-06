@@ -75,6 +75,7 @@ input, select { font-family: inherit; font-size: 10px; padding: 8px; border: 3px
 .req { font-size: 8px; background: #fff3bf; border: 2px solid var(--ink); padding: 4px 6px; margin: 6px 0; line-height: 1.8; }
 .req small { display: block; color: #6c6480; }
 .req.past { background: #f1ece0; }
+.req small.how { color: var(--blue); }
 .req.past.ignored small { color: var(--bad); }
 .req.past.granted small { color: var(--good); }
 .instr { display: flex; align-items: center; gap: 8px; font-size: 8px; margin: 6px 0; }

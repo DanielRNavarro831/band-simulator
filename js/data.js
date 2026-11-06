@@ -17,6 +17,7 @@ const TRAITS = {
   Gearhead:   { desc: 'Gear wears half as fast and plays one tier higher.' },
   Steady:     { desc: 'Smaller random swings on stage and in the studio.' },
   Wildcard:   { desc: 'Bigger random swings on stage and in the studio.' },
+  Lazy:       { desc: 'Asks for a vacation at 70% stamina instead of 50%.' },
 };
 const TRAIT_NAMES = Object.keys(TRAITS);
 

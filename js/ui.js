@@ -141,8 +141,8 @@ const Menus = {
       const busy = m.busy ? `<div class="tag info">${m.busy.type === 'vacation' ? 'On vacation' : 'In lessons'} · ${m.busy.weeks}w</div>` : '';
       const lr = m.lastRequest;
       const req = m.request
-        ? `<div class="req">💬 Wants: "${esc(m.request.text)}" <small>${m.request.weeks}w left to grant it (+15 stamina), or -20 if ignored</small></div>`
-        : lr ? `<div class="req past ${lr.status}">Last request (${dateStr(lr.week)}): "${esc(lr.text)}" <small>${lr.status === 'granted' ? '✓ Granted' : '✗ Ignored (-20 stamina)'}</small></div>` : '';
+        ? `<div class="req">💬 Wants: "${esc(m.request.text)}"${m.request.hint ? `<small class="how">➜ ${esc(m.request.hint)}</small>` : ''}<small>${m.request.weeks}w left to grant it (+15 stamina), or -20 if ignored</small></div>`
+        : lr ? `<div class="req past ${lr.status}">Last request (${dateStr(lr.week)}): "${esc(lr.text)}" <small>${{ granted: '✓ Granted', ignored: '✗ Ignored (-20 stamina)', withdrawn: '– Withdrawn (rested up)' }[lr.status] || ''}</small></div>` : '';
       const lesson = (stat, label, lvl) => `<button data-act="lesson" data-id="${m.id}" data-stat="${stat}" ${canTrain && lvl < 10 && s.money >= lessonCost(lvl) ? '' : 'disabled'}>${label} lesson<small>${lvl >= 10 ? 'MAX' : fmtMoney(lessonCost(lvl))}</small></button>`;
       const firing = UI.confirmFire === m.id;
       body += `<div class="card">

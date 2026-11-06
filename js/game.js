@@ -123,18 +123,64 @@ function drainStamina(m, amt) {
 function addStamina(m, amt) { m.stamina = clamp(Math.round(m.stamina + amt), 0, 100); if (m.stamina >= 30) m.warned = false; }
 
 // ---------- requests ----------
-function makeRequest(m) {
-  const r = Math.random();
-  if (r < 0.35) {
-    const choices = INSTRUMENTS.filter(i => i !== m.instrument);
-    const v = RNG.pick(choices);
-    m.request = { type: 'instrument', value: v, text: `I want to play ${v}.`, weeks: 8 };
-  } else if (r < 0.7) {
+// Stamina % at or below which a member may ask for a vacation.
+function vacationThreshold(m) { return m.trait === 'Lazy' ? 70 : 50; }
+const VACATION_REQUEST_COOLDOWN = 8; // weeks after returning before they can ask again
+
+// Each entry: [weight, builder]. Builders return null when the request doesn't make sense right now.
+const REQUEST_TYPES = {
+  instrument: [3, m => {
+    const v = RNG.pick(INSTRUMENTS.filter(i => i !== m.instrument));
+    return { value: v, text: `I want to play ${v}.`, hint: `Switch ${m.name} to ${v} in the Band menu.` };
+  }],
+  genre: [3, m => {
     const v = RNG.chance(0.6) ? m.genre : RNG.pick(GENRES);
-    m.request = { type: 'genre', value: v, text: `Let's make ${/^[AEIOU]/.test(v) ? 'an' : 'a'} ${v} album!`, weeks: 8 };
-  } else {
-    m.request = { type: 'vacation', value: null, text: 'I need a vacation...', weeks: 8 };
+    return { value: v, text: `Let's make ${/^[AEIOU]/.test(v) ? 'an' : 'a'} ${v} album!`, hint: `Start writing a ${v} album.` };
+  }],
+  vacation: [4, m => {
+    if (m.stamina > vacationThreshold(m)) return null;
+    if (m.lastVacationWeek != null && state.week - m.lastVacationWeek < VACATION_REQUEST_COOLDOWN) return null;
+    return { value: null, text: 'I need a vacation...', hint: `Send ${m.name} on vacation from the Band menu.` };
+  }],
+  lesson: [3, m => {
+    const opts = [['instrument', instrLevel(m)], ['theory', m.theory], ['creativity', m.creativity]].filter(([, l]) => l < 10);
+    if (!opts.length) return null;
+    const [stat] = RNG.pick(opts);
+    const label = stat === 'instrument' ? m.instrument : STAT_LABEL[stat];
+    return { value: stat, text: `I want to get better at ${label}.`, hint: `Book ${m.name} a ${label} lesson in the Band menu.` };
+  }],
+  venue: [3, m => {
+    const unlocked = CITIES.filter(c => cityUnlocked(c.id));
+    const away = unlocked.filter(c => c.id !== 'home');
+    const pool = away.length ? away : unlocked;
+    // Prefer somewhere the band hasn't played much.
+    const c = pool.slice().sort((a, b) => (state.cities[a.id].shows || 0) - (state.cities[b.id].shows || 0) + RNG.float(-1.5, 1.5))[0];
+    return { value: c.id, text: `I want to play a show in ${cityName(c.id)}!`, hint: `Play a show in ${cityName(c.id)} (Tour).`, weeks: 10 };
+  }],
+  gear: [2, m => {
+    const next = GEAR_TIERS[m.gear.tier + 1];
+    if (!next || state.money < next.cost * 0.5) return null;
+    return { value: null, text: `My ${m.instrument.toLowerCase()} rig is holding me back.`, hint: `Upgrade ${m.name}'s gear in the Shop.` };
+  }],
+  tour: [2, m => {
+    if (CITIES.filter(c => cityUnlocked(c.id) && tierIndex(c.id) <= 1).length < 3) return null;
+    return { value: null, text: "Let's go on a real tour!", hint: 'Start a tour with 3 or more cities.', weeks: 10 };
+  }],
+  bandmate: [1, m => {
+    if (state.members.length >= MAX_MEMBERS) return null;
+    return { value: null, text: 'We need another member.', hint: 'Hire someone from the Recruit menu.', weeks: 10 };
+  }],
+};
+
+function makeRequest(m) {
+  const options = [];
+  for (const [type, [weight, build]] of Object.entries(REQUEST_TYPES)) {
+    const req = build(m);
+    if (req) options.push({ type, weight, req });
   }
+  let roll = Math.random() * options.reduce((a, o) => a + o.weight, 0);
+  const pick = options.find(o => (roll -= o.weight) < 0) || options[0];
+  m.request = { type: pick.type, weeks: 8, ...pick.req };
   m.lastRequest = { text: m.request.text, week: state.week, status: 'pending' };
   log(`${m.name}: "${m.request.text}"`, 'warn');
   UI.popupMember(m, '!', '#ff8787');
@@ -178,6 +224,7 @@ function startLesson(m, stat) {
   state.money -= cost;
   m.busy = { type: 'lesson', stat, weeks: 1 };
   log(`${m.name} started ${stat === 'instrument' ? m.instrument : STAT_LABEL[stat]} lessons.`);
+  fulfillRequest(m, 'lesson', stat);
   return null;
 }
 function startVacation(m) {
@@ -193,7 +240,7 @@ function startVacation(m) {
 function finishBusy(m) {
   const b = m.busy; m.busy = null;
   if (b.type === 'lesson') { UI.popupMember(m, 'Lesson done', '#a5d8ff'); addXp(m, b.stat, 80); }
-  else { addStamina(m, 60); addXp(m, 'creativity', 40); log(`${m.name} is back from vacation, refreshed and inspired.`, 'good'); UI.popupMember(m, '+60 Stamina', '#8ce99a'); }
+  else { m.lastVacationWeek = state.week; addStamina(m, 60); addXp(m, 'creativity', 40); log(`${m.name} is back from vacation, refreshed and inspired.`, 'good'); UI.popupMember(m, '+60 Stamina', '#8ce99a'); }
 }
 
 function removeMember(m) { state.members = state.members.filter(x => x !== m); }
@@ -237,6 +284,7 @@ function hireCandidate(idx) {
   delete c.star;
   state.members.push(c);
   log(`${c.name} joined the band on ${c.instrument}! (Trait: ${c.trait})`, 'good');
+  state.members.forEach(m => fulfillRequest(m, 'bandmate', null));
   if (statSum(c) >= 22 && totalFans() > 0) {
     const before = totalFans(); scaleFans(1.03);
     log(`"New lineup!" Buzz brings +${fmtNum(totalFans() - before)} fans.`, 'good');
@@ -261,6 +309,7 @@ function upgradeGear(m) {
   if (state.money < next.cost) return 'Not enough money.';
   state.money -= next.cost; m.gear.tier++; m.gear.condition = 100;
   log(`${m.name} got ${next.name} gear!`, 'good');
+  fulfillRequest(m, 'gear', null);
   return null;
 }
 function buyBus() {
@@ -424,6 +473,7 @@ function startTour(cityIds, transport, buy) {
   state.money -= cost;
   for (const [k, n] of Object.entries(buy)) state.merch[k] += n;
   state.activity = { type: 'tour', cities: cityIds.slice(), idx: 0, transport, results: [], cancelled: [] };
+  if (cityIds.length >= 3) state.members.forEach(m => fulfillRequest(m, 'tour', null));
   log(cityIds.length === 1 ? `Booked a show in ${cityName(cityIds[0])}.` : `Tour started: ${cityIds.length} cities by ${TRANSPORT[transport].name}!`);
   return null;
 }
@@ -463,7 +513,8 @@ function playShow(cityId, transport) {
     addXp(m, 'performance', 15 + score / 40);
     addXp(m, 'instrument', 10);
   }
-    const res = { cityId, score, events, attendance, tickets, merchRev, sold, fanDelta };
+    ms.forEach(m => fulfillRequest(m, 'venue', cityId));
+  const res = { cityId, score, events, attendance, tickets, merchRev, sold, fanDelta };
   log(`${cityName(cityId)}: score ${score}, ${attendance} came, +${fmtMoney(tickets + merchRev)}`, score >= 400 ? 'good' : 'info');
   events.forEach(e => log(e, e.startsWith('ENCORE') ? 'good' : 'bad'));
   return res;
@@ -573,6 +624,12 @@ function memberWeek(m) {
   if (m.busy) { m.busy.weeks--; if (m.busy.weeks <= 0) finishBusy(m); }
   else if (s.activity.type === 'idle' && !s.writing) addStamina(m, 5);
 
+  // A rested member quietly drops a vacation request instead of holding it against you.
+  if (m.request && m.request.type === 'vacation' && m.stamina >= vacationThreshold(m) + 30) {
+    m.request = null; m.nextRequestIn = nextRequestDelay(m);
+    if (m.lastRequest) m.lastRequest.status = 'withdrawn';
+    log(`${m.name} feels rested and dropped their vacation request.`);
+  }
   if (m.request) {
     m.request.weeks--;
     if (m.request.weeks <= 0) {
