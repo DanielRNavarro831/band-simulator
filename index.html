@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1a1630">
+  <title>Band Simulator</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="BandSim">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="hud">
+      <div class="row"><span id="hud-band"></span><span id="hud-date"></span></div>
+      <div class="row"><span id="hud-money"></span><span id="hud-fans"></span></div>
+    </header>
+    <div id="stage-wrap">
+      <canvas id="stage" width="160" height="120"></canvas>
+      <div id="popups"></div>
+    </div>
+    <div id="status">
+      <div id="status-text"></div>
+      <div class="bar"><div id="status-bar"></div></div>
+    </div>
+    <div id="speed">
+      <button data-speed="0" aria-label="Pause">❚❚</button>
+      <button data-speed="1" aria-label="Normal speed">▶</button>
+      <button data-speed="2" aria-label="Fast">▶▶</button>
+      <button data-speed="4" aria-label="Fastest">▶▶▶</button>
+    </div>
+    <div id="log"></div>
+    <nav id="nav">
+      <button data-menu="band">Band</button>
+      <button data-menu="write">Write</button>
+      <button data-menu="tour">Tour</button>
+      <button data-menu="shop">Shop</button>
+      <button data-menu="recruit">Recruit</button>
+      <button data-menu="fans">Fans</button>
+    </nav>
+  </div>
+
+  <div id="overlay" hidden><div id="panel"></div></div>
+  <div id="toast"></div>
+
+  <div id="title" hidden>
+    <div class="title-box">
+      <h1>BAND<br>SIMULATOR</h1>
+      <p class="tagline">Manage a band from garage to global.</p>
+      <label>Band name<input id="in-band" maxlength="24" placeholder="The Unnamed"></label>
+      <label>Hometown<input id="in-town" maxlength="18" placeholder="Hometown"></label>
+      <button id="btn-new" class="primary">New Band</button>
+      <button id="btn-continue" hidden>Continue</button>
+      <div id="legacy"></div>
+    </div>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/rng.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
