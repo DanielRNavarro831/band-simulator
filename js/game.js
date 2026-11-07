@@ -131,7 +131,7 @@ const VACATION_REQUEST_COOLDOWN = 8; // weeks after returning before they can as
 const REQUEST_TYPES = {
   instrument: [3, m => {
     const v = RNG.pick(INSTRUMENTS.filter(i => i !== m.instrument));
-    return { value: v, text: `I want to play ${v}.`, hint: `Switch ${m.name} to ${v} in the Band menu.` };
+    return { value: v, text: `I want to play ${v} on our next album.`, hint: `Switch ${m.name} to ${v} in the Band menu, then start writing an album.` };
   }],
   genre: [3, m => {
     const v = RNG.chance(0.6) ? m.genre : RNG.pick(GENRES);
@@ -208,11 +208,12 @@ function canStartActivity() {
 }
 
 function switchInstrument(m, inst) {
-  if (state.activity.type === 'tour') return;
+  if (state.activity.type === 'tour') return 'Instruments can\'t change on tour.';
+  if (state.writing) return 'Instruments are locked in until the album is finished.';
   if (m.instruments[inst] == null) { m.instruments[inst] = 0; m.instrXp[inst] = 0; log(`${m.name} picked up the ${inst} for the first time.`); }
   else log(`${m.name} switched to ${inst}.`);
   m.instrument = inst;
-  fulfillRequest(m, 'instrument', inst);
+  return null;
 }
 
 function startLesson(m, stat) {
@@ -327,25 +328,38 @@ function startWriting(genre, title) {
   const err = canStartActivity(); if (err) return err;
   const songs = songCountFor(state.members);
   state.writing = { genre, title: title || randomTitle(), songs, weeksLeft: songs, T: [], C: [], M: [],
-    bonusC: state.nextAlbumBonus || 0, lineup: state.members.map(m => m.id) };
+    bonusC: state.nextAlbumBonus || 0, lineup: state.members.map(m => m.id),
+    pts: { T: 0, C: 0, M: 0 }, byMember: {} };
   state.nextAlbumBonus = 0;
   state.activity = { type: 'writing' };
   log(`Writing "${state.writing.title}" (${genre}, ${songs} songs).`);
-  state.members.forEach(m => fulfillRequest(m, 'genre', genre));
+  state.members.forEach(m => {
+    fulfillRequest(m, 'genre', genre);
+    fulfillRequest(m, 'instrument', m.instrument); // instruments lock in for the album
+  });
   return null;
 }
 function writingWeek() {
   const w = state.writing;
+  w.pts = w.pts || { T: 0, C: 0, M: 0 }; w.byMember = w.byMember || {};
+  const gains = [];
   for (const m of state.members) {
     const sf = 0.6 + 0.4 * m.stamina / 100;
     const sp = spreadOf(m);
     const j = () => 1 + RNG.float(-0.25, 0.25) * sp;
-    w.T.push(clamp(m.theory * 10 * sf * j(), 0, 100));
-    w.C.push(clamp(m.creativity * 10 * sf * j(), 0, 100));
-    w.M.push(clamp(instrLevel(m) * 10 * sf * j(), 0, 100));
+    const t = clamp(m.theory * 10 * sf * j(), 0, 100);
+    const c = clamp(m.creativity * 10 * sf * j(), 0, 100);
+    const mu = clamp(instrLevel(m) * 10 * sf * j(), 0, 100);
+    w.T.push(t); w.C.push(c); w.M.push(mu);
+    // Display points: the same contributions on a friendlier scale.
+    const g = { T: Math.max(1, Math.round(t / 5)), C: Math.max(1, Math.round(c / 5)), M: Math.max(1, Math.round(mu / 5)) };
+    const bm = w.byMember[m.id] || (w.byMember[m.id] = { name: m.name, T: 0, C: 0, M: 0 });
+    for (const k of ['T', 'C', 'M']) { w.pts[k] += g[k]; bm[k] += g[k]; }
+    gains.push({ m, g });
     addXp(m, 'theory', 12); addXp(m, 'creativity', 10); addXp(m, 'instrument', 4);
     drainStamina(m, 3);
   }
+  if (UI.writingPoints) UI.writingPoints(gains);
   w.weeksLeft--;
   if (w.weeksLeft <= 0) {
     state.activity = { type: 'idle' };
@@ -353,6 +367,9 @@ function writingWeek() {
     UI.open(Modals.release);
   }
 }
+// Genre mastery: each Acclaimed album in a genre is +4 critic points for future albums
+// in that genre (a Classic counts double), capped at +12.
+function genreMastery(genre) { return Math.min(12, 4 * ((state.genreAcclaim || {})[genre] || 0)); }
 function lengthScore(n) { return n >= 8 && n <= 10 ? 100 : (n === 6 || n === 7 || n === 11) ? 80 : 60; }
 function scoreLabel(s) {
   if (s >= 90) return { text: 'Classic', cls: 'gold' };
@@ -373,6 +390,8 @@ function releaseAlbum(format) {
   let fit = Math.min(16, lineup.filter(m => m.genre === w.genre).length * 4);
   if (state.trending.includes(w.genre)) fit += 8;
   if (state.stale === w.genre) fit -= 8;
+  const mastery = genreMastery(w.genre);
+  fit += mastery;
   const spread = avg(lineup.map(spreadOf)) || 1;
 
   const critics = CRITICS.map((c, i) => {
@@ -400,7 +419,13 @@ function releaseAlbum(format) {
   distributeFans(newFans);
 
   const album = { title: w.title, genre: w.genre, songs: w.songs, format, score, critics, week: state.week,
-    fansGained: newFans, fansLost: lost, sales: 0, revenue: 0, remaining: 0, firstWeek: 0 };
+    fansGained: newFans, fansLost: lost, sales: 0, revenue: 0, remaining: 0, firstWeek: 0,
+    mastery, pts: w.pts ? { ...w.pts } : null };
+  if (score >= 75) {
+    state.genreAcclaim = state.genreAcclaim || {};
+    state.genreAcclaim[w.genre] = (state.genreAcclaim[w.genre] || 0) + (score >= 90 ? 2 : 1);
+    album.masteryUp = true;
+  }
   if (f.price > 0) {
     const buyers = totalFans() * f.buy * q * RNG.float(0.85, 1.15);
     const first = Math.round(buyers * 0.35);
@@ -717,7 +742,7 @@ function newGame(bandName, hometown) {
     activity: { type: 'idle' }, writing: null, albums: [],
     cities: {}, trending: [], stale: null,
     merch: Object.fromEntries(Object.keys(MERCH).map(k => [k, 0])),
-    ownsBus: false, nextAlbumBonus: 0,
+    ownsBus: false, nextAlbumBonus: 0, genreAcclaim: {},
     rollHistory: {}, log: [], weeksSinceAlbum: 0, milestones: {},
     peakFans: 0, totals: { shows: 0, earned: 0 }, paydayDue: false, gameOver: false, lastAttendance: 0,
   };

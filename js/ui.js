@@ -83,6 +83,13 @@ const UI = {
       text = away ? `${away} member${away > 1 ? 's' : ''} away · rest of the band is resting` : 'Hanging out in the rehearsal room';
       pct = wp;
     }
+    const meter = document.getElementById('album-meter');
+    if (s.writing && s.activity.type === 'writing') {
+      const key = s.writing.title + '|' + s.writing.songs;
+      if (this.shownKey !== key) { this.shownKey = key; this.shown = { ...(s.writing.pts || { T: 0, C: 0, M: 0 }) }; }
+      meter.hidden = false;
+      for (const k of ['T', 'C', 'M']) set('pt-' + k, String(this.shown[k]));
+    } else { meter.hidden = true; this.shownKey = null; }
     if (s.speed === 0) text = '❚❚ PAUSED · ' + text;
     set('status-text', text);
     $('#status-bar').style.width = Math.round(clamp(pct, 0, 1) * 100) + '%';
@@ -120,6 +127,33 @@ const UI = {
     const i = state.members.indexOf(m); if (i < 0) return;
     this.popup(Render.slotX(i, state.members.length) + 5, Render.memberY() - 6, text, color, 'm' + m.id);
   },
+  // Game-Dev-Story-style: each member's weekly album points float up over their head
+  // in the pool's color, and the meter under the stage counts up as they land.
+  writingPoints(gains) {
+    const weekMs = WEEK_MS / Math.max(1, state.speed || 1);
+    const colors = { T: '#74c0fc', C: '#f783ac', M: '#ffd43b' };
+    gains.forEach(({ m, g }, mi) => {
+      ['T', 'C', 'M'].forEach((k, ki) => {
+        const delay = (ki + 0.2) * weekMs / 3.4 + mi * Math.min(120, weekMs / 12);
+        setTimeout(() => {
+          if (!state || !state.writing) return;
+          const i = state.members.indexOf(m);
+          if (i >= 0) this.float(Render.slotX(i, state.members.length) + 5 + (ki - 1) * 3, Render.memberY() - 4, '+' + g[k], colors[k]);
+          if (this.shown) this.shown[k] += g[k];
+        }, delay);
+      });
+    });
+  },
+  float(x, y, text, color) {
+    const el = document.createElement('div');
+    el.className = 'popup pts';
+    el.textContent = text;
+    el.style.left = (x / Render.W * 100) + '%';
+    el.style.top = (y / Render.H * 100) + '%';
+    el.style.color = color;
+    $('#popups').appendChild(el);
+    setTimeout(() => el.remove(), 1300);
+  },
   showScorePopup(r) {
     Render.lingerUntil = performance.now() + 2200;
     const c = r.score >= 700 ? '#ffd43b' : r.score >= 400 ? '#8ce99a' : r.score >= 200 ? '#fff' : '#ff8787';
@@ -149,7 +183,7 @@ const Menus = {
         <div class="card-head"><b>${esc(m.name)}</b><span class="tag trait">${m.trait}</span></div>
         <div class="sub">${m.genre} fan · ${fmtMoney(salary(m))}/yr · ${m.albums} album${m.albums === 1 ? '' : 's'}</div>
         ${busy}${req}
-        <label class="instr">Plays <select data-chg="instr" data-id="${m.id}" ${touring ? 'disabled' : ''}>${opts}</select></label>
+        <label class="instr">Plays <select data-chg="instr" data-id="${m.id}" ${touring || s.writing ? 'disabled' : ''}>${opts}</select>${s.writing ? ' <small>🔒 until album is done</small>' : ''}</label>
         <div class="stats">
           <span>${m.instrument}</span>${bar10(il)}
           <span>Theory</span>${bar10(m.theory)}
@@ -176,17 +210,30 @@ const Menus = {
         UI.refresh();
       },
     };
-    UI.chg = { instr: (d, el) => { switchInstrument(byId(d.id), el.value); UI.refresh(); } };
+    UI.chg = { instr: (d, el) => { const e = switchInstrument(byId(d.id), el.value); if (e) UI.toast(e); UI.refresh(); } };
   },
 
   write(p) {
     const s = state;
     if (s.writing && s.writing.weeksLeft <= 0) { UI.replace(Modals.release); return; }
     if (s.writing) {
-      const w = s.writing;
-      p.innerHTML = frame('Studio', `<p>Writing <b>"${esc(w.title)}"</b> (${w.genre}).</p>
+      const w = s.writing, pts = w.pts || { T: 0, C: 0, M: 0 };
+      const rows = Object.values(w.byMember || {});
+      const top = Math.max(1, ...rows.map(r => r.T + r.C + r.M));
+      let table = rows.length ? '' : '<p class="note">Points will appear after the first week of writing.</p>';
+      rows.sort((a, b) => (b.T + b.C + b.M) - (a.T + a.C + a.M)).forEach(r => {
+        const tot = r.T + r.C + r.M;
+        table += `<div class="contrib"><div class="contrib-head"><span>${esc(r.name)}</span><b>${tot}</b></div>
+          <div class="contrib-bar" style="width:${Math.round(tot / top * 100)}%">
+            <i class="T" style="flex:${r.T}"></i><i class="C" style="flex:${r.C}"></i><i class="M" style="flex:${r.M}"></i></div>
+          <div class="sub"><span class="pt-T">Theory ${r.T}</span> · <span class="pt-C">Creativity ${r.C}</span> · <span class="pt-M">Playing ${r.M}</span></div></div>`;
+      });
+      const mb = genreMastery(w.genre);
+      p.innerHTML = frame('Studio', `<p>Writing <b>"${esc(w.title)}"</b> (${w.genre}${mb ? ` · 🏅 +${mb}` : ''}).</p>
         <p>Song ${w.songs - w.weeksLeft + 1} of ${w.songs}. ${w.weeksLeft} week(s) to go.</p>
-        <p class="note">Everyone gains Theory, Creativity and Instrument XP while writing, but stamina drains 3/week.</p>`);
+        <div class="pt-totals"><span class="pt-T">Theory<b>${pts.T}</b></span><span class="pt-C">Creativity<b>${pts.C}</b></span><span class="pt-M">Playing<b>${pts.M}</b></span></div>
+        <h3>Who's contributing</h3>${table}
+        <p class="note">Points come from each member's Theory, Creativity and instrument level, scaled by their stamina. Instruments are locked in until the album is done. Everyone gains XP while writing, but stamina drains 3/week.</p>`);
       return;
     }
     const err = canStartActivity();
@@ -195,13 +242,14 @@ const Menus = {
     let grid = '<div class="grid3">';
     GENRES.forEach(g => {
       const fans = s.members.filter(m => m.genre === g).length;
-      const mark = (s.trending.includes(g) ? '🔥' : s.stale === g ? '❄' : '') + '★'.repeat(fans);
+      const mastered = genreMastery(g) / 4;
+      const mark = (s.trending.includes(g) ? '🔥' : s.stale === g ? '❄' : '') + '🏅'.repeat(mastered) + '★'.repeat(fans);
       grid += `<button data-act="genre" data-g="${g}" class="${d.genre === g ? 'sel' : ''}">${g}<small>${mark || '&nbsp;'}</small></button>`;
     });
     grid += '</div>';
     const body = `${err ? `<p class="warn">${err}</p>` : ''}
       <h3>Genre</h3>${grid}
-      <p class="note">🔥 trending (+fans, +critic score) · ❄ stale · ★ a member who specializes in it (+critic score)</p>
+      <p class="note">🔥 trending (+fans, +critic score) · ❄ stale · ★ a member who specializes in it (+critic score) · 🏅 mastered: you've made an Acclaimed album in it (+4 critic score each, a Classic counts double, max +12)</p>
       <h3>Album title</h3>
       <div class="title-row"><input id="album-title" maxlength="32" value="${esc(d.title)}"><button data-act="dice">🎲</button></div>
       <p>Based on the band's stamina, this album will have <b>${songs} songs</b> (${songs} weeks). More rested bands write longer albums. 8–10 songs is the sweet spot.</p>`;
@@ -385,6 +433,9 @@ const Modals = {
     const l = scoreLabel(album.score);
     const sum = `<div id="reveal-sum" class="hidden">
       <div class="big-score ${l.cls}">${album.score}<small>/100</small></div><div class="center"><span class="tag ${l.cls}">${l.text}</span></div>
+      ${album.pts ? `<div class="pt-totals small"><span class="pt-T">Theory<b>${album.pts.T}</b></span><span class="pt-C">Creativity<b>${album.pts.C}</b></span><span class="pt-M">Playing<b>${album.pts.M}</b></span></div>` : ''}
+      ${album.mastery ? `<div class="line"><span>🏅 ${album.genre} mastery</span><span>+${album.mastery} critic score</span></div>` : ''}
+      ${album.masteryUp ? `<p class="good-note">🏅 ${album.genre} mastery up! Future ${album.genre} albums get a critic bonus.</p>` : ''}
       <div class="line"><span>New fans</span><span>+${fmtNum(album.fansGained)}</span></div>
       ${album.fansLost ? `<div class="line"><span>Disappointed fans</span><span>-${fmtNum(album.fansLost)}</span></div>` : ''}
       ${album.firstWeek ? `<div class="line"><span>First week sales</span><span>${fmtNum(album.firstWeek)} (${fmtMoney(album.firstWeek * FORMATS[album.format].price)})</span></div>` : ''}
