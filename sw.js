@@ -1,9 +1,9 @@
 // Service worker: lets the installed app run offline.
 // Bump VERSION whenever game files change so phones pick up the update.
-const VERSION = 'bandsim-v7';
+const VERSION = 'bandsim-v8';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
-  'js/data.js', 'js/rng.js', 'js/game.js', 'js/render.js', 'js/icons.js', 'js/ui.js', 'js/main.js',
+  'js/data.js', 'js/rng.js', 'js/game.js', 'js/render.js', 'js/icons.js', 'js/audio.js', 'js/ui.js', 'js/main.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 
@@ -19,8 +19,8 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
     fetch(e.request).then(res => {
-      const copy = res.clone();
-      caches.open(VERSION).then(c => c.put(e.request, copy));
+      // Only cache complete, successful responses (music gets cached the first time it plays).
+      if (res.status === 200) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); }
       return res;
     }).catch(() => caches.match(e.request, { ignoreSearch: true }))
   );

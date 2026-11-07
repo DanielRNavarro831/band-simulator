@@ -10,12 +10,13 @@ const Title = {
   },
   hide() { $('#title').hidden = true; },
   start() {
+    Music.play(); // tap on New Band = the gesture phones need to allow audio
     const band = $('#in-band').value.trim() || 'The Unnamed';
     const town = $('#in-town').value.trim() || 'Hometown';
     newGame(band, town);
     this.enter();
   },
-  cont() { if (loadGame()) this.enter(); },
+  cont() { Music.play(); if (loadGame()) this.enter(); },
   enter() {
     this.hide();
     acc = 0;
@@ -44,6 +45,10 @@ window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-ico]').forEach(el => { el.outerHTML = Icons.img(el.dataset.ico); });
   UI.init();
   Render.init($('#stage'));
+  Music.init();
+  $('#btn-mute').onclick = () => Music.toggleMute();
+  // iOS can suspend audio after calls/notifications; any tap wakes it back up.
+  document.addEventListener('pointerdown', () => { if (state && Music.ctx) Music.unlock(); });
   $('#btn-new').onclick = () => Title.start();
   $('#btn-continue').onclick = () => Title.cont();
   Title.show();
