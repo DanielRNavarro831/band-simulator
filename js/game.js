@@ -473,7 +473,11 @@ function startTour(cityIds, transport, buy) {
   state.money -= cost;
   for (const [k, n] of Object.entries(buy)) state.merch[k] += n;
   state.activity = { type: 'tour', cities: cityIds.slice(), idx: 0, transport, results: [], cancelled: [] };
-  if (cityIds.length >= 3) state.members.forEach(m => fulfillRequest(m, 'tour', null));
+  // Requests count as granted the moment the show/tour is booked, not when it's played.
+  for (const m of state.members) {
+    if (m.request && m.request.type === 'venue' && cityIds.includes(m.request.value)) fulfillRequest(m, 'venue', m.request.value);
+    if (cityIds.length >= 3) fulfillRequest(m, 'tour', null);
+  }
   log(cityIds.length === 1 ? `Booked a show in ${cityName(cityIds[0])}.` : `Tour started: ${cityIds.length} cities by ${TRANSPORT[transport].name}!`);
   return null;
 }
@@ -513,8 +517,7 @@ function playShow(cityId, transport) {
     addXp(m, 'performance', 15 + score / 40);
     addXp(m, 'instrument', 10);
   }
-    ms.forEach(m => fulfillRequest(m, 'venue', cityId));
-  const res = { cityId, score, events, attendance, tickets, merchRev, sold, fanDelta };
+    const res = { cityId, score, events, attendance, tickets, merchRev, sold, fanDelta };
   log(`${cityName(cityId)}: score ${score}, ${attendance} came, +${fmtMoney(tickets + merchRev)}`, score >= 400 ? 'good' : 'info');
   events.forEach(e => log(e, e.startsWith('ENCORE') ? 'good' : 'bad'));
   return res;
