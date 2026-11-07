@@ -195,7 +195,8 @@ function fulfillRequest(m, type, value) {
   log(`${m.name} is happy you listened! (+15 stamina)`, 'good');
   UI.popupMember(m, '+15 Stamina', '#8ce99a');
 }
-function nextRequestDelay(m) { return m.trait === 'Diva' ? RNG.int(5, 10) : RNG.int(8, 16); }
+function nextRequestDelay(m) { return m.trait === 'Diva' ? RNG.int(7, 12) : RNG.int(10, 18); }
+const MAX_OPEN_REQUESTS = 2; // band-wide
 
 // ---------- actions ----------
 function canStartActivity() {
@@ -633,8 +634,10 @@ function memberWeek(m) {
     if (m.lastRequest) m.lastRequest.status = 'withdrawn';
     log(`${m.name} feels rested and dropped their vacation request.`);
   }
+  // Requests only come up, and only tick down, while the band is free to act on them.
+  const bandFree = s.activity.type === 'idle' && !s.writing;
   if (m.request) {
-    m.request.weeks--;
+    if (bandFree) m.request.weeks--;
     if (m.request.weeks <= 0) {
       const text = m.request.text;
       m.request = null; m.nextRequestIn = nextRequestDelay(m);
@@ -643,7 +646,10 @@ function memberWeek(m) {
       log(`${m.name} feels ignored ("${text}") -20 stamina`, 'bad');
       UI.popupMember(m, '-20 Stamina', '#ff8787');
     }
-  } else if (s.activity.type !== 'tour' && --m.nextRequestIn <= 0) makeRequest(m);
+  } else if (bandFree && --m.nextRequestIn <= 0) {
+    if (s.members.filter(x => x.request).length >= MAX_OPEN_REQUESTS) m.nextRequestIn = RNG.int(3, 6);
+    else makeRequest(m);
+  }
 
   if (m.stamina < 30 && !m.warned) { m.warned = true; log(`${m.name} is exhausted. Give them some rest!`, 'warn'); }
   if (m.stamina <= 0 && s.activity.type !== 'tour' && RNG.chance(0.5)) {
