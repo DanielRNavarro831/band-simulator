@@ -1,9 +1,9 @@
 // Service worker: lets the installed app run offline.
 // Bump VERSION whenever game files change so phones pick up the update.
-const VERSION = 'bandsim-v6';
+const VERSION = 'bandsim-v7';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
-  'js/data.js', 'js/rng.js', 'js/game.js', 'js/render.js', 'js/ui.js', 'js/main.js',
+  'js/data.js', 'js/rng.js', 'js/game.js', 'js/render.js', 'js/icons.js', 'js/ui.js', 'js/main.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 

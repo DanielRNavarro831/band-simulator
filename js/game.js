@@ -160,7 +160,7 @@ const REQUEST_TYPES = {
   gear: [2, m => {
     const next = GEAR_TIERS[m.gear.tier + 1];
     if (!next || state.money < next.cost * 0.5) return null;
-    return { value: null, text: `My ${m.instrument.toLowerCase()} rig is holding me back.`, hint: `Upgrade ${m.name}'s gear in the Shop.` };
+    return { value: null, text: `My ${m.instrument.toLowerCase()} rig is holding me back.`, hint: `Upgrade ${m.name}'s gear in the Gear menu.` };
   }],
   tour: [2, m => {
     if (CITIES.filter(c => cityUnlocked(c.id) && tierIndex(c.id) <= 1).length < 3) return null;
@@ -324,8 +324,24 @@ function buyBus() {
 
 // ---------- albums ----------
 function songCountFor(members) { return clamp(5 + Math.floor(avg(members.map(m => m.stamina)) / 100 * 7), 5, 12); }
+// How many cities count as a "release tour". Early bands with only their hometown
+// unlocked can satisfy it with a single show.
+function releaseTourSize() {
+  const reachable = CITIES.filter(c => cityUnlocked(c.id) && tierIndex(c.id) <= (state.ownsBus ? 2 : 1)).length;
+  return Math.min(2, Math.max(1, reachable));
+}
+// How many albums in a row (most recent first) were this genre.
+function genreStreak(genre) { let n = 0; for (let i = state.albums.length - 1; i >= 0 && state.albums[i].genre === genre; i--) n++; return n; }
+function untouredAlbum() { const a = latestAlbum(); return a && a.toured === false ? a : null; }
 function startWriting(genre, title) {
   const err = canStartActivity(); if (err) return err;
+  const skipped = untouredAlbum();
+  if (skipped) {
+    const before = totalFans(); scaleFans(0.95);
+    skipped.toured = 'skipped';
+    log(`Fans are upset you never toured "${skipped.title}". -${fmtNum(before - totalFans())} fans`, 'bad');
+    UI.toast(`No release tour for "${skipped.title}": fans are upset!`);
+  }
   const songs = songCountFor(state.members);
   state.writing = { genre, title: title || randomTitle(), songs, weeksLeft: songs, T: [], C: [], M: [],
     bonusC: state.nextAlbumBonus || 0, lineup: state.members.map(m => m.id),
@@ -416,11 +432,22 @@ function releaseAlbum(format) {
   let newFans = Math.round((150 + 3 * Math.pow(before, 0.8)) * q * f.fanMult * gm * RNG.float(0.85, 1.15));
   let lost = 0;
   if (score < 35) { scaleFans(0.95); lost = before - totalFans(); newFans = Math.round(newFans * 0.3); }
+  // Same-genre streak: the 2nd in a row draws complaints, the 3rd+ drives fans away.
+  let streak = 1;
+  for (let i = state.albums.length - 1; i >= 0 && state.albums[i].genre === w.genre; i--) streak++;
+  if (streak === 2) newFans = Math.round(newFans * 0.75);
+  else if (streak >= 3) {
+    newFans = Math.round(newFans * 0.4);
+    const b2 = totalFans(); scaleFans(1 - Math.min(0.15, 0.04 * (streak - 2)));
+    lost += b2 - totalFans();
+  }
   distributeFans(newFans);
 
   const album = { title: w.title, genre: w.genre, songs: w.songs, format, score, critics, week: state.week,
     fansGained: newFans, fansLost: lost, sales: 0, revenue: 0, remaining: 0, firstWeek: 0,
-    mastery, pts: w.pts ? { ...w.pts } : null };
+    mastery, pts: w.pts ? { ...w.pts } : null, streak, toured: false };
+  if (streak === 2) log(`Fans grumble: another ${w.genre} album? (fewer new fans)`, 'warn');
+  if (streak >= 3) log(`Fans are tired of ${w.genre}! ${streak} in a row cost you fans.`, 'bad');
   if (score >= 75) {
     state.genreAcclaim = state.genreAcclaim || {};
     state.genreAcclaim[w.genre] = (state.genreAcclaim[w.genre] || 0) + (score >= 90 ? 2 : 1);
@@ -500,6 +527,16 @@ function startTour(cityIds, transport, buy) {
   for (const [k, n] of Object.entries(buy)) state.merch[k] += n;
   state.activity = { type: 'tour', cities: cityIds.slice(), idx: 0, transport, results: [], cancelled: [] };
   // Requests count as granted the moment the show/tour is booked, not when it's played.
+  const la = untouredAlbum();
+  if (la && cityIds.length >= releaseTourSize()) { la.toured = true; log(`This is the release tour for "${la.title}"!`, 'good'); }
+  // Fan city requests are satisfied at booking; the show itself gets a packed house.
+  for (const r of [...(state.fanRequests || [])]) {
+    if (cityIds.includes(r.cityId)) {
+      state.cities[r.cityId].hype = true;
+      state.fanRequests = state.fanRequests.filter(x => x !== r);
+      log(`📣 Fans in ${cityName(r.cityId)} are thrilled you're coming!`, 'good');
+    }
+  }
   for (const m of state.members) {
     if (m.request && m.request.type === 'venue' && cityIds.includes(m.request.value)) fulfillRequest(m, 'venue', m.request.value);
     if (cityIds.length >= 3) fulfillRequest(m, 'tour', null);
@@ -514,7 +551,8 @@ function playShow(cityId, transport) {
   const { score, events } = computeShowScore();
   const cap = Math.max(tier.cap, Math.round(cs.fans * 0.8));
   const walkins = RNG.int(5, 20) + Math.round(score / 50);
-  const attendance = Math.min(cap, Math.round(cs.fans * (0.35 + score / 2000) * RNG.float(0.9, 1.1)) + walkins);
+  const hype = cs.hype ? 1.3 : 1;
+  const attendance = Math.min(Math.round(cap * hype), Math.round(cs.fans * (0.35 + score / 2000) * RNG.float(0.9, 1.1) * hype) + walkins);
   const tickets = attendance * tier.ticket;
   let merchRev = 0; const sold = {};
   for (const [k, it] of Object.entries(MERCH)) {
@@ -526,11 +564,17 @@ function playShow(cityId, transport) {
   if (pa) {
     let n = Math.round(attendance * 0.3 * (score / 1000) * clamp(pa.score / 70, 0.3, 1.5) * RNG.float(0.7, 1.3));
     if (pa.format === 'cddvd' && score >= 700) n = Math.round(n * 1.25);
+    if (pa.pirated) n = Math.round(n * 0.6);
     sold.album = n;
     const rev = n * FORMATS[pa.format].price;
     pa.sales += n; pa.revenue += rev; merchRev += rev;
   }
-  const fanDelta = Math.round(attendance * (score - 150) / 1000 + walkins * score / 600);
+  let fanDelta = Math.round(attendance * (score - 150) / 1000 + walkins * score / 600);
+  if (cs.hype) { // a show the fans asked for
+    cs.hype = false;
+    fanDelta += Math.round(attendance * 0.15);
+    events.push('Fans who asked for this show packed the venue!');
+  }
   cs.fans = Math.max(0, cs.fans + fanDelta);
   cs.shows = (cs.shows || 0) + 1;
   s.money += tickets + merchRev;
@@ -545,10 +589,11 @@ function playShow(cityId, transport) {
   }
     const res = { cityId, score, events, attendance, tickets, merchRev, sold, fanDelta };
   log(`${cityName(cityId)}: score ${score}, ${attendance} came, +${fmtMoney(tickets + merchRev)}`, score >= 400 ? 'good' : 'info');
-  events.forEach(e => log(e, e.startsWith('ENCORE') ? 'good' : 'bad'));
+  events.forEach(e => log(e, isGoodEvent(e) ? 'good' : 'bad'));
   return res;
 }
 
+function isGoodEvent(e) { return /^(ENCORE|Fans who)/.test(e); }
 function tourWeek() {
   const a = state.activity;
   if (!state.members.length) { state.activity = { type: 'idle' }; return; }
@@ -570,46 +615,113 @@ function endTour() {
 }
 
 // ---------- events ----------
+// Weighted random events. Bad events get more likely, and their costs scale with
+// cash on hand, as the band gets richer, so money never stops mattering.
 function randomEvent() {
   const s = state, tf = totalFans();
-  const pool = ['fanmail', 'feud'];
-  if (s.albums.length) pool.push('radio');
-  if (tf > 50 && s.albums.length) pool.push('viral');
-  if (!s.ownsBus && s.money > 100) pool.push('van');
-  if (tf >= 1500 && s.activity.type === 'idle' && !s.writing && !s.members.some(m => m.busy)) pool.push('festival', 'festival');
-  switch (RNG.pick(pool)) {
+  const wealth = clamp(s.money / 15000, 0, 3);           // 0 when broke, 3 at $45k+
+  const bad = 1 + wealth;
+  const physical = latestPhysical();
+  const geared = s.members.filter(m => m.gear.tier > 0);
+  const options = [
+    ['fanmail', 1, true],
+    ['feud', 1, true],
+    ['radio', 1, s.albums.length > 0],
+    ['viral', 1, tf > 50 && s.albums.length > 0],
+    ['festival', 2, tf >= 1500 && s.activity.type === 'idle' && !s.writing && !s.members.some(m => m.busy)],
+    ['van', 1, !s.ownsBus && s.money > 100],
+    ['busRepair', bad * 0.6, s.ownsBus && s.money > 300],
+    ['lawsuit', bad, s.albums.length > 0 && s.money > 500],
+    ['leak', bad * 0.8, physical && !physical.pirated],
+    ['audit', bad * 0.7, s.money > 3000],
+    ['theft', bad * 0.6, geared.length > 0],
+    ['injury', 0.8, s.members.length > 0],
+    ['scandal', 0.7, tf > 500],
+  ].filter(o => o[2]);
+  let roll = Math.random() * options.reduce((a, o) => a + o[1], 0);
+  const type = (options.find(o => (roll -= o[1]) < 0) || options[0])[0];
+  const charge = amt => { const c = Math.min(s.money, Math.round(amt)); s.money -= c; return c; };
+  const msg = (t, x) => UI.open(Modals.message(t, x));
+  switch (type) {
     case 'radio': {
       const c = RNG.pick(CITIES.filter(c => cityUnlocked(c.id)));
       const gain = Math.max(8, Math.round(s.cities[c.id].fans * RNG.float(0.1, 0.25)));
       s.cities[c.id].fans += gain;
-      UI.open(Modals.message('Radio Play!', `A DJ in ${cityName(c.id)} spun one of your songs. +${fmtNum(gain)} fans there.`));
+      msg('Radio Play!', `A DJ in ${cityName(c.id)} spun one of your songs. +${fmtNum(gain)} fans there.`);
       break;
     }
     case 'viral': {
       const before = tf, pct = RNG.float(0.05, 0.12);
       for (const c of Object.values(s.cities)) c.fans += Math.round(c.fans * pct);
       distributeFans(RNG.int(10, 40));
-      UI.open(Modals.message('Gone Viral!', `A fan's clip of your band blew up online. +${fmtNum(totalFans() - before)} fans worldwide.`));
+      msg('Gone Viral!', `A fan's clip of your band blew up online. +${fmtNum(totalFans() - before)} fans worldwide.`);
       break;
     }
     case 'van': {
-      const cost = Math.min(s.money, RNG.int(100, 300));
-      s.money -= cost;
-      UI.open(Modals.message('Van Trouble', `The van broke down. Repairs cost ${fmtMoney(cost)}.`));
+      const c = charge(RNG.int(100, 300));
+      msg('Van Trouble', `The van broke down. Repairs cost ${fmtMoney(c)}.`);
+      break;
+    }
+    case 'busRepair': {
+      const c = charge(RNG.int(300, 800) + s.money * 0.03);
+      msg('Bus Breakdown', `The tour bus's transmission died. Repairs cost ${fmtMoney(c)}.`);
       break;
     }
     case 'feud': {
       if (s.writing) s.writing.bonusC += 10; else s.nextAlbumBonus = 10;
       s.members.forEach(m => drainStamina(m, 10));
-      UI.open(Modals.message('Rival Feud!', `A rival band trashed you in an interview. Everyone is stressed (-10 stamina), but fired up: ${s.writing ? 'the album in progress' : 'your next album'} gets a Creativity boost.`));
+      msg('Rival Feud!', `A rival band trashed you in an interview. Everyone is stressed (-10 stamina), but fired up: ${s.writing ? 'the album in progress' : 'your next album'} gets a Creativity boost.`);
       break;
     }
     case 'fanmail': {
       s.members.forEach(m => addStamina(m, 10));
-      UI.open(Modals.message('Fan Mail', 'A heartfelt letter from a fan lifted everyone\'s spirits. +10 stamina for all.'));
+      msg('Fan Mail', 'A heartfelt letter from a fan lifted everyone\'s spirits. +10 stamina for all.');
       break;
     }
     case 'festival': UI.open(Modals.festival); break;
+    case 'lawsuit': {
+      const a = RNG.pick(s.albums);
+      const c = charge(Math.max(300, s.money * RNG.float(0.15, 0.3)));
+      log(`Copyright lawsuit settled: -${fmtMoney(c)}`, 'bad');
+      msg('Copyright Lawsuit!', `A songwriter claims a song on "${a.title}" rips off their work. Your lawyers say settle. It costs ${fmtMoney(c)}.`);
+      break;
+    }
+    case 'leak': {
+      physical.pirated = true;
+      physical.remaining *= 0.4;
+      log(`"${physical.title}" leaked online. Physical sales will suffer.`, 'bad');
+      msg('Album Leaked!', `"${physical.title}" was seeded on the dark web. Store sales drop sharply, and copies at your shows sell 40% less from now on.`);
+      break;
+    }
+    case 'audit': {
+      const c = charge(s.money * RNG.float(0.08, 0.15));
+      log(`Tax audit: -${fmtMoney(c)}`, 'bad');
+      msg('Tax Audit', `The tax office went through your books and found "irregularities". Back taxes and fines: ${fmtMoney(c)}.`);
+      break;
+    }
+    case 'theft': {
+      const m = geared.sort((a, b) => b.gear.tier - a.gear.tier)[0];
+      const lost = GEAR_TIERS[m.gear.tier].name;
+      m.gear.tier--; m.gear.condition = 100;
+      log(`${m.name}'s ${lost} rig was stolen!`, 'bad');
+      msg('Gear Stolen!', `Someone broke into the van and took ${m.name}'s ${lost} rig. They're back on ${GEAR_TIERS[m.gear.tier].name} gear until you replace it.`);
+      break;
+    }
+    case 'injury': {
+      const m = RNG.pick(s.members);
+      m.stamina = clamp(m.stamina - 30, 0, 100);
+      const c = charge(Math.max(150, s.money * 0.05));
+      log(`${m.name} got hurt: -30 stamina, -${fmtMoney(c)}`, 'bad');
+      msg('Injury', `${m.name} sprained a wrist moving gear. Medical bills cost ${fmtMoney(c)}, and they lost 30 stamina.`);
+      break;
+    }
+    case 'scandal': {
+      const before = tf; scaleFans(1 - RNG.float(0.03, 0.06));
+      const lost = before - totalFans();
+      log(`Tabloid scandal: -${fmtNum(lost)} fans`, 'bad');
+      msg('Tabloid Scandal', `A gossip site ran an embarrassing story about the band. ${fmtNum(lost)} fans unfollowed you.`);
+      break;
+    }
   }
 }
 function playFestival() {
@@ -697,12 +809,14 @@ function advanceWeek() {
     log('Your recruiting search found some musicians! Check Recruit.', 'good');
     UI.toast('New recruits found!');
   }
+  fanRequestsWeek();
   s.weeksSinceAlbum++;
   if (s.weeksSinceAlbum > 30 && s.albums.length) {
     scaleFans(0.99);
     if (s.weeksSinceAlbum === 31) log('Fans are drifting away. Time for a new album!', 'warn');
   }
-  if (s.activity.type !== 'tour' && RNG.chance(0.04)) randomEvent();
+  // Events get more frequent as cash piles up (4%/week when broke, up to 10%/week at $45k+).
+  if (s.activity.type !== 'tour' && RNG.chance(0.04 + 0.02 * clamp(s.money / 15000, 0, 3))) randomEvent();
   s.peakFans = Math.max(s.peakFans, totalFans());
   checkMilestones();
   if (!s.members.length) { gameOver('Everyone left the band.'); return; }
@@ -714,6 +828,30 @@ function advanceWeek() {
   save();
 }
 
+// Fans in a city ask the band to come play. Booking a show there in time packs the
+// venue; ignoring them costs fans in that city.
+const FAN_REQUEST_WEEKS = 16;
+function fanRequestsWeek() {
+  const s = state;
+  s.fanRequests = s.fanRequests || [];
+  for (const r of [...s.fanRequests]) {
+    if (--r.weeks <= 0) {
+      const cs = s.cities[r.cityId], before = cs.fans;
+      cs.fans = Math.floor(cs.fans * 0.92);
+      s.fanRequests = s.fanRequests.filter(x => x !== r);
+      log(`📣 Fans in ${cityName(r.cityId)} gave up waiting. -${fmtNum(before - cs.fans)} fans there`, 'bad');
+    }
+  }
+  if (s.albums.length && s.fanRequests.length < 2 && RNG.chance(0.035)) {
+    const opts = CITIES.filter(c => cityUnlocked(c.id) && c.id !== 'home' && !s.cities[c.id].hype
+      && !s.fanRequests.some(r => r.cityId === c.id));
+    if (!opts.length) return;
+    const c = opts.sort((a, b) => s.cities[b.id].fans - s.cities[a.id].fans + RNG.float(-80, 80))[0];
+    s.fanRequests.push({ cityId: c.id, weeks: FAN_REQUEST_WEEKS });
+    log(`📣 Fans in ${cityName(c.id)} are begging you to play there! (${FAN_REQUEST_WEEKS} weeks)`, 'warn');
+    UI.toast(`📣 Fans in ${cityName(c.id)} want a show!`);
+  }
+}
 function rollTrends(first) {
   const g = RNG.shuffle(GENRES.slice());
   state.trending = [g[0], g[1]]; state.stale = g[2];
@@ -742,7 +880,7 @@ function newGame(bandName, hometown) {
     activity: { type: 'idle' }, writing: null, albums: [],
     cities: {}, trending: [], stale: null,
     merch: Object.fromEntries(Object.keys(MERCH).map(k => [k, 0])),
-    ownsBus: false, nextAlbumBonus: 0, genreAcclaim: {},
+    ownsBus: false, nextAlbumBonus: 0, genreAcclaim: {}, fanRequests: [],
     rollHistory: {}, log: [], weeksSinceAlbum: 0, milestones: {},
     peakFans: 0, totals: { shows: 0, earned: 0 }, paydayDue: false, gameOver: false, lastAttendance: 0,
   };

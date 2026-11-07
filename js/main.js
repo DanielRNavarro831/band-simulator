@@ -40,6 +40,8 @@ function loop(now) {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  Icons.init();
+  document.querySelectorAll('[data-ico]').forEach(el => { el.outerHTML = Icons.img(el.dataset.ico); });
   UI.init();
   Render.init($('#stage'));
   $('#btn-new').onclick = () => Title.start();

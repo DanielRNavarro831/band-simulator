@@ -177,3 +177,19 @@ function palm(ctx, x, y) {
 function book(ctx, x, y) { px(ctx, x, y, 6, 5, '#1971c2'); px(ctx, x + 1, y + 1, 4, 3, '#f8f9fa'); px(ctx, x + 3, y, 1, 5, '#1971c2'); }
 function bubble(ctx, x, y) { px(ctx, x, y, 6, 7, '#fff'); px(ctx, x + 1, y + 7, 2, 1, '#fff'); px(ctx, x + 2, y + 1, 2, 3, '#e03131'); px(ctx, x + 2, y + 5, 2, 1, '#e03131'); }
 function note(ctx, x, y) { px(ctx, x + 1, y, 1, 4, '#fff59d'); px(ctx, x, y + 3, 2, 2, '#fff59d'); px(ctx, x + 2, y, 1, 1, '#fff59d'); }
+
+// Small portrait of a member playing their current instrument (Band & Recruit cards).
+function drawPortrait(canvas, m) {
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  px(ctx, 0, 0, 26, 26, '#2e2148');
+  for (let y = 0; y < 20; y += 5) for (let x = (y / 5 % 2) * 4 - 4; x < 26; x += 8) px(ctx, x, y, 7, 4, '#382a57');
+  px(ctx, 0, 20, 26, 6, '#7a5230'); px(ctx, 0, 23, 26, 1, '#6a4526');
+  person(ctx, 8, 3, m, 0, false);
+}
+function drawPortraits(root, list) {
+  root.querySelectorAll('canvas[data-portrait]').forEach(c => {
+    const m = list[+c.dataset.portrait];
+    if (m) drawPortrait(c, m);
+  });
+}

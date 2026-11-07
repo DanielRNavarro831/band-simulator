@@ -138,16 +138,16 @@ const UI = {
         setTimeout(() => {
           if (!state || !state.writing) return;
           const i = state.members.indexOf(m);
-          if (i >= 0) this.float(Render.slotX(i, state.members.length) + 5 + (ki - 1) * 3, Render.memberY() - 4, '+' + g[k], colors[k]);
+          if (i >= 0) this.float(Render.slotX(i, state.members.length) + 5 + (ki - 1) * 3, Render.memberY() - 4, '+' + g[k], colors[k], k);
           if (this.shown) this.shown[k] += g[k];
         }, delay);
       });
     });
   },
-  float(x, y, text, color) {
+  float(x, y, text, color, key) {
     const el = document.createElement('div');
     el.className = 'popup pts';
-    el.textContent = text;
+    el.innerHTML = (key ? Icons.img(key) : '') + esc(text);
     el.style.left = (x / Render.W * 100) + '%';
     el.style.top = (y / Render.H * 100) + '%';
     el.style.color = color;
@@ -159,7 +159,7 @@ const UI = {
     const c = r.score >= 700 ? '#ffd43b' : r.score >= 400 ? '#8ce99a' : r.score >= 200 ? '#fff' : '#ff8787';
     this.popup(80, 30, `${cityName(r.cityId)}: ${r.score}`, c, 'show', true);
     this.popup(80, 44, `+${fmtMoney(r.tickets + r.merchRev)}`, '#8ce99a', 'show2');
-    r.events.forEach(e => this.popup(80, 52, e.split('!')[0] + '!', e.startsWith('ENCORE') ? '#ffd43b' : '#ff8787', 'show3'));
+    r.events.forEach(e => this.popup(80, 52, e.split('!')[0] + '!', isGoodEvent(e) ? '#ffd43b' : '#ff8787', 'show3'));
   },
 };
 
@@ -180,8 +180,9 @@ const Menus = {
       const lesson = (stat, label, lvl) => `<button data-act="lesson" data-id="${m.id}" data-stat="${stat}" ${canTrain && lvl < 10 && s.money >= lessonCost(lvl) ? '' : 'disabled'}>${label} lesson<small>${lvl >= 10 ? 'MAX' : fmtMoney(lessonCost(lvl))}</small></button>`;
       const firing = UI.confirmFire === m.id;
       body += `<div class="card">
+        <div class="card-top"><canvas class="portrait" width="26" height="26" data-portrait="${s.members.indexOf(m)}"></canvas><div class="card-info">
         <div class="card-head"><b>${esc(m.name)}</b><span class="tag trait">${m.trait}</span></div>
-        <div class="sub">${m.genre} fan · ${fmtMoney(salary(m))}/yr · ${m.albums} album${m.albums === 1 ? '' : 's'}</div>
+        <div class="sub">${m.genre} fan · ${fmtMoney(salary(m))}/yr · ${m.albums} album${m.albums === 1 ? '' : 's'}</div></div></div>
         ${busy}${req}
         <label class="instr">Plays <select data-chg="instr" data-id="${m.id}" ${touring || s.writing ? 'disabled' : ''}>${opts}</select>${s.writing ? ' <small>🔒 until album is done</small>' : ''}</label>
         <div class="stats">
@@ -200,6 +201,7 @@ const Menus = {
       </div>`;
     });
     p.innerHTML = frame(`${esc(s.bandName)} ${s.members.length}/${MAX_MEMBERS}`, body);
+    drawPortraits(p, s.members);
     UI.h = {
       lesson: d => { const e = startLesson(byId(d.id), d.stat); if (e) UI.toast(e); UI.refresh(); },
       vacation: d => { const e = startVacation(byId(d.id)); if (e) UI.toast(e); UI.refresh(); },
@@ -226,12 +228,12 @@ const Menus = {
         table += `<div class="contrib"><div class="contrib-head"><span>${esc(r.name)}</span><b>${tot}</b></div>
           <div class="contrib-bar" style="width:${Math.round(tot / top * 100)}%">
             <i class="T" style="flex:${r.T}"></i><i class="C" style="flex:${r.C}"></i><i class="M" style="flex:${r.M}"></i></div>
-          <div class="sub"><span class="pt-T">Theory ${r.T}</span> · <span class="pt-C">Creativity ${r.C}</span> · <span class="pt-M">Playing ${r.M}</span></div></div>`;
+          <div class="sub"><span class="pt-T">${Icons.img('T')}${r.T}</span> · <span class="pt-C">${Icons.img('C')}${r.C}</span> · <span class="pt-M">${Icons.img('M')}${r.M}</span></div></div>`;
       });
       const mb = genreMastery(w.genre);
       p.innerHTML = frame('Studio', `<p>Writing <b>"${esc(w.title)}"</b> (${w.genre}${mb ? ` · 🏅 +${mb}` : ''}).</p>
         <p>Song ${w.songs - w.weeksLeft + 1} of ${w.songs}. ${w.weeksLeft} week(s) to go.</p>
-        <div class="pt-totals"><span class="pt-T">Theory<b>${pts.T}</b></span><span class="pt-C">Creativity<b>${pts.C}</b></span><span class="pt-M">Playing<b>${pts.M}</b></span></div>
+        <div class="pt-totals"><span class="pt-T">${Icons.label('T')}<b>${pts.T}</b></span><span class="pt-C">${Icons.label('C')}<b>${pts.C}</b></span><span class="pt-M">${Icons.label('M')}<b>${pts.M}</b></span></div>
         <h3>Who's contributing</h3>${table}
         <p class="note">Points come from each member's Theory, Creativity and instrument level, scaled by their stamina. Instruments are locked in until the album is done. Everyone gains XP while writing, but stamina drains 3/week.</p>`);
       return;
@@ -243,13 +245,17 @@ const Menus = {
     GENRES.forEach(g => {
       const fans = s.members.filter(m => m.genre === g).length;
       const mastered = genreMastery(g) / 4;
-      const mark = (s.trending.includes(g) ? '🔥' : s.stale === g ? '❄' : '') + '🏅'.repeat(mastered) + '★'.repeat(fans);
+      const rep = genreStreak(g);
+      const mark = (s.trending.includes(g) ? '🔥' : s.stale === g ? '❄' : '') + '🏅'.repeat(mastered) + '★'.repeat(fans) + (rep ? '🔁' : '');
       grid += `<button data-act="genre" data-g="${g}" class="${d.genre === g ? 'sel' : ''}">${g}<small>${mark || '&nbsp;'}</small></button>`;
     });
     grid += '</div>';
     const body = `${err ? `<p class="warn">${err}</p>` : ''}
       <h3>Genre</h3>${grid}
-      <p class="note">🔥 trending (+fans, +critic score) · ❄ stale · ★ a member who specializes in it (+critic score) · 🏅 mastered: you've made an Acclaimed album in it (+4 critic score each, a Classic counts double, max +12)</p>
+      <p class="note">🔥 trending (+fans, +critic score) · ❄ stale · ★ a member who specializes in it (+critic score) · 🏅 mastered: you've made an Acclaimed album in it (+4 critic score each, a Classic counts double, max +12) · 🔁 your last release was this genre (fans get tired of repeats)</p>
+      ${genreStreak(d.genre) === 1 ? `<p class="warn">🔁 Your last album was ${d.genre} too. A 2nd in a row draws complaints (fewer new fans).</p>` : ''}
+      ${genreStreak(d.genre) >= 2 ? `<p class="warn">🔁 That would be ${genreStreak(d.genre) + 1} ${d.genre} albums in a row. Fans will leave!</p>` : ''}
+      ${untouredAlbum() && !err ? `<p class="warn">⚠ You haven't done a release tour for "${esc(untouredAlbum().title)}" (${releaseTourSize()}+ cities). Writing now costs 5% of your fans.</p>` : ''}
       <h3>Album title</h3>
       <div class="title-row"><input id="album-title" maxlength="32" value="${esc(d.title)}"><button data-act="dice">🎲</button></div>
       <p>Based on the band's stamina, this album will have <b>${songs} songs</b> (${songs} weeks). More rested bands write longer albums. 8–10 songs is the sweet spot.</p>`;
@@ -283,10 +289,14 @@ const Menus = {
     d.cities = d.cities.filter(id => cityUnlocked(id) && tierIndex(id) <= t.maxTier);
 
     let body = err ? `<p class="warn">${err}</p>` : '';
+    const fr = s.fanRequests || [];
+    if (fr.length) body += fr.map(r => `<p class="fanreq">📣 Fans in <b>${esc(cityName(r.cityId))}</b> want a show! ${r.weeks}w left. Book it for a packed house.</p>`).join('');
+    const ua = untouredAlbum();
+    if (ua) body += `<p class="note">🎤 Book ${releaseTourSize()}+ cities to make this the release tour for "${esc(ua.title)}".</p>`;
     body += '<h3>Transport</h3><div class="grid3">';
     for (const [k, tr] of Object.entries(TRANSPORT)) {
       const locked = k === 'bus' && !s.ownsBus;
-      const price = locked ? 'Buy in Shop' : `${fmtMoney(tr.perCity)}/city${k === 'jet' ? ' +' + fmtMoney(tr.rent) : ''}`;
+      const price = locked ? 'Buy in Gear menu' : `${fmtMoney(tr.perCity)}/city${k === 'jet' ? ' +' + fmtMoney(tr.rent) : ''}`;
       body += `<button data-act="tr" data-k="${k}" class="${d.transport === k ? 'sel' : ''}" ${locked ? 'disabled' : ''}>${tr.name}<small>${price}<br>-${tr.drain} stamina/show</small></button>`;
     }
     body += '</div><h3>Cities <small>(tap in the order to visit)</small></h3>';
@@ -295,7 +305,8 @@ const Menus = {
       CITIES.filter(c => c.tier === tier).forEach(c => {
         const unlocked = cityUnlocked(c.id), reach = ti <= t.maxTier, order = d.cities.indexOf(c.id);
         const f = s.cities[c.id].fans;
-        const sub = !unlocked ? `🔒 ${fmtNum(f)}/${fmtNum(CITY_TIERS[tier].unlock)}` : !reach ? `Needs ${ti === 3 ? 'Jet' : 'Bus'}` : `${fmtNum(f)} fans`;
+        const asked = fr.some(r => r.cityId === c.id) ? '📣' : '';
+        const sub = !unlocked ? `🔒 ${fmtNum(f)}/${fmtNum(CITY_TIERS[tier].unlock)}` : !reach ? `${asked}Needs ${ti === 3 ? 'Jet' : 'Bus'}` : `${asked}${fmtNum(f)} fans`;
         body += `<button data-act="city" data-id="${c.id}" class="${order >= 0 ? 'sel' : ''}" ${unlocked && reach ? '' : 'disabled'}>${order >= 0 ? `<em>${order + 1}</em>` : ''}${esc(cityName(c.id))}<small>${sub}</small></button>`;
       });
       body += '</div>';
@@ -347,7 +358,7 @@ const Menus = {
       <div class="note">Unlocks national cities. Shows drain only ${TRANSPORT.bus.drain} stamina instead of ${TRANSPORT.van.drain}.</div>
       ${s.ownsBus ? '' : `<div class="btns one"><button data-act="bus" ${!touring && s.money >= TRANSPORT.bus.buy ? '' : 'disabled'}>Buy Tour Bus</button></div>`}</div>
       <p class="note">The Private Jet is rented per tour from the Tour screen. Merch is ordered when you plan a show.</p>`;
-    p.innerHTML = frame('Shop', body);
+    p.innerHTML = frame('Gear', body);
     const act = fn => x => { const e = fn(byId(x.id)); if (e) UI.toast(e); UI.refresh(); };
     UI.h = { repair: act(repairGear), upgrade: act(upgradeGear), bus: () => { const e = buyBus(); if (e) UI.toast(e); UI.refresh(); } };
   },
@@ -360,9 +371,10 @@ const Menus = {
       body = `<p>Band: ${s.members.length}/${MAX_MEMBERS}. Traits stay hidden until you hire.</p>`;
       s.candidates.forEach((c, i) => {
         const inst = Object.entries(c.instruments).map(([k, v]) => `${k} Lv${v}`).join(', ');
-        body += `<div class="card ${c.star ? 'star' : ''}"><div class="card-head"><b>${esc(c.name)}${c.star ? ' ★' : ''}</b><span class="tag trait">???</span></div>
+        body += `<div class="card ${c.star ? 'star' : ''}"><div class="card-top"><canvas class="portrait" width="26" height="26" data-portrait="${i}"></canvas><div class="card-info">
+          <div class="card-head"><b>${esc(c.name)}${c.star ? ' ★' : ''}</b><span class="tag trait">???</span></div>
           <div class="sub">${c.genre} fan · ${fmtMoney(salary(c))}/yr</div>
-          <div class="sub">${inst}</div>
+          <div class="sub">${inst}</div></div></div>
           <div class="stats"><span>${c.instrument}</span>${bar10(instrLevel(c))}<span>Theory</span>${bar10(c.theory)}<span>Perform</span>${bar10(c.performance)}<span>Creative</span>${bar10(c.creativity)}</div>
           <div class="btns one"><button class="primary" data-act="hire" data-i="${i}" ${s.members.length < MAX_MEMBERS ? '' : 'disabled'}>Hire</button></div></div>`;
       });
@@ -376,6 +388,7 @@ const Menus = {
       }
     }
     p.innerHTML = frame('Recruit', body, foot);
+    if (s.candidates) drawPortraits(p, s.candidates);
     UI.h = {
       search: x => { const e = startRecruit(x.k); if (e) UI.toast(e); UI.refresh(); },
       hire: x => { const e = hireCandidate(+x.i); if (e) UI.toast(e); UI.refresh(); },
@@ -389,6 +402,7 @@ const Menus = {
       <div class="line"><span>Peak</span><span>${fmtNum(s.peakFans)}</span></div>
       <p>🔥 Trending: <b>${s.trending.join(', ')}</b> · ❄ Stale: <b>${s.stale}</b></p>
       ${s.albums.length && s.weeksSinceAlbum > 24 ? `<p class="warn">It's been ${s.weeksSinceAlbum} weeks since your last album. After 30, fans start leaving.</p>` : ''}
+      ${(s.fanRequests || []).map(r => `<p class="fanreq">📣 Fans in <b>${esc(cityName(r.cityId))}</b> want a show (${r.weeks}w left). Ignoring them costs fans there.</p>`).join('')}
       <h3>Cities</h3>`;
     TIER_ORDER.forEach(tier => {
       body += `<div class="tier-label">${CITY_TIERS[tier].name} (unlock ${fmtNum(CITY_TIERS[tier].unlock)})</div>`;
@@ -403,7 +417,8 @@ const Menus = {
       body += `<div class="card"><div class="card-head"><b>"${esc(a.title)}"</b>${scoreTag(a.score)}</div>
         <div class="sub">${dateStr(a.week)} · ${a.genre} · ${a.songs} songs · ${FORMATS[a.format].name}</div>
         <div class="sub">Critics: ${a.critics.map(c => c.score).join(' / ')} → <b>${a.score}</b></div>
-        <div class="sub">+${fmtNum(a.fansGained)} fans${a.sales ? ` · ${fmtNum(a.sales)} sold · ${fmtMoney(a.revenue)}` : ''}</div></div>`;
+        <div class="sub">+${fmtNum(a.fansGained)} fans${a.sales ? ` · ${fmtNum(a.sales)} sold · ${fmtMoney(a.revenue)}` : ''}${a.pirated ? ' · ☠ leaked' : ''}</div>
+        ${a.toured === true ? '<div class="sub good">🎤 Release tour done</div>' : a.toured === 'skipped' ? '<div class="sub bad">No release tour</div>' : a.toured === false ? '<div class="sub">🎤 Awaiting release tour</div>' : ''}</div>`;
     });
     p.innerHTML = frame('Fans & Records', body);
   },
@@ -433,7 +448,9 @@ const Modals = {
     const l = scoreLabel(album.score);
     const sum = `<div id="reveal-sum" class="hidden">
       <div class="big-score ${l.cls}">${album.score}<small>/100</small></div><div class="center"><span class="tag ${l.cls}">${l.text}</span></div>
-      ${album.pts ? `<div class="pt-totals small"><span class="pt-T">Theory<b>${album.pts.T}</b></span><span class="pt-C">Creativity<b>${album.pts.C}</b></span><span class="pt-M">Playing<b>${album.pts.M}</b></span></div>` : ''}
+      ${album.pts ? `<div class="pt-totals small"><span class="pt-T">${Icons.label('T')}<b>${album.pts.T}</b></span><span class="pt-C">${Icons.label('C')}<b>${album.pts.C}</b></span><span class="pt-M">${Icons.label('M')}<b>${album.pts.M}</b></span></div>` : ''}
+      ${album.streak === 2 ? `<p class="warn">Fans grumble: two ${album.genre} albums in a row. Fewer new fans this time.</p>` : ''}
+      ${album.streak >= 3 ? `<p class="warn">${album.streak} ${album.genre} albums in a row! Fans are leaving. Switch genres next time.</p>` : ''}
       ${album.mastery ? `<div class="line"><span>🏅 ${album.genre} mastery</span><span>+${album.mastery} critic score</span></div>` : ''}
       ${album.masteryUp ? `<p class="good-note">🏅 ${album.genre} mastery up! Future ${album.genre} albums get a critic bonus.</p>` : ''}
       <div class="line"><span>New fans</span><span>+${fmtNum(album.fansGained)}</span></div>
@@ -477,7 +494,7 @@ const Modals = {
       const l = scoreLabel(r.score / 10);
       body += `<div class="card"><div class="card-head"><b>${esc(cityName(r.cityId))}</b><span class="tag ${l.cls}">${r.score}</span></div>
         <div class="sub">${r.attendance} came · tickets ${fmtMoney(r.tickets)} · merch ${fmtMoney(r.merchRev)} · fans ${r.fanDelta >= 0 ? '+' : ''}${r.fanDelta}</div>
-        ${r.events.map(e => `<div class="sub ${e.startsWith('ENCORE') ? 'good' : 'bad'}">${esc(e)}</div>`).join('')}</div>`;
+        ${r.events.map(e => `<div class="sub ${isGoodEvent(e) ? 'good' : 'bad'}">${esc(e)}</div>`).join('')}</div>`;
     });
     if (a.cancelled.length) body += `<p class="warn">Cancelled: ${a.cancelled.map(id => esc(cityName(id))).join(', ')}. Fans there are disappointed.</p>`;
     const head = `<div class="line"><span>Shows</span><span>${a.results.length}</span></div>
